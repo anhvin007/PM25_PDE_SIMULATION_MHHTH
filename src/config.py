@@ -14,6 +14,9 @@ DOMAIN_LENGTH = 2000.0 # Chiều dài toàn miền (m)
 OBS_I = 50            # Chỉ số hàng (Trục Y)
 OBS_J = 50            # Chỉ số cột (Trục X)
 
+# CÔNG TẮC ĐÁNH GIÁ (True = Tái phân tích không gian, False = Đánh giá dự báo mù)
+USE_NUDGING_IN_TEST = False
+
 # =====================================================================
 # 2. THÔNG SỐ THỜI GIAN VÀ CHIA TẬP DỮ LIỆU
 # =====================================================================
@@ -24,26 +27,33 @@ TEST_RATIO = 0.2      # Tỷ lệ chia tập Test (20%) để xác thực ngoài
 # =====================================================================
 # 3. THÔNG SỐ VẬT LÝ KHÍ QUYỂN & PHÁT THẢI (Physics & Emissions)
 # =====================================================================
-S_BASE = 0.85 #21.44        # Cường độ phát thải cơ sở (micro-gram / m^3 / h)
-H_STD = 500        # Chiều cao lớp biên tiêu chuẩn (m)
+S_BASE = 0.8567 #21.44        # Cường độ phát thải cơ sở (micro-gram / m^3 / h)
+H_STD = 530        # Chiều cao lớp biên tiêu chuẩn (m)
 EPSILON_BLH = 50.0    # Tránh chia cho 0 khi tính Phi_vol
 
 # Thông số Rửa trôi do giáng thủy (Wet Scavenging Washout)
-ALPHA_RAIN = 3.0e-4   # Hệ số bắt giữ hạt
+ALPHA_RAIN = 3.0e-4# Hệ số bắt giữ hạt
 BETA_RAIN = 0.79      # Hằng số dạng hạt PM2.5
 
 # Hệ số lắng đọng khô
-DRY_DEPOSITION = 0.01  # Bụi tự động rơi xuống mặt đường % mỗi giờ
+DRY_DEPOSITION = 0  # Bụi tự động rơi xuống mặt đường % mỗi giờ
 
 # =====================================================================
 # 4. THÔNG SỐ ĐỒNG HÓA DỮ LIỆU (Nudging / Parametric Kalman)
 # =====================================================================
-G_NUDGE = 0.8         # Hệ số khuếch đại lực nắn (Kalman Gain cực đại) [0 -> 1.0]
-R_NUDGE = 100.0       # Bán kính ảnh hưởng thực tế (m). VD: 100m = 5 ô lưới
+G_NUDGE = 0.8        # Hệ số khuếch đại lực nắn (Kalman Gain cực đại) [0 -> 1.0]
+R_NUDGE = 500.0       # Bán kính ảnh hưởng thực tế (m). VD: 100m = 5 ô lưới
 
 # =====================================================================
 # 5. CẤU TRÚC ĐƯỜNG DẪN DỰ ÁN (Path Management)
 # =====================================================================
+
+# =====================================================================
+# 6. CẤU HÌNH KIỂM ĐỊNH & SPIN-UP (Validation & Spin-up Configuration)
+# =====================================================================
+SPINUP_HOURS = 117    # Thời gian khởi động lạnh (giờ) tìm được từ phân tích giải tích
+
+
 # Lấy đường dẫn tuyệt đối của thư mục chứa file config.py (thư mục src)
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 # Lùi lại 1 cấp để ra thư mục gốc dự án

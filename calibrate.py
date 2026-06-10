@@ -12,17 +12,22 @@ from src.physics_engine import wind_to_uv, get_pg_diffusivity, get_washout_coeff
 def run_calibration_grid_search():
     print("🔍 KHỞI ĐỘNG HỆ THỐNG HIỆU CHỈNH THAM SỐ (CALIBRATION)")
     
-    # 1. Load tập Train (Chỉ lấy 1 tháng = 720 giờ để train cho nhanh)
     train_df = pd.read_csv(config.TRAIN_DATA_PATH, index_col='time', parse_dates=True)
     train_df = train_df.iloc[:720] 
+    
+    # Đọc động từ file config thay vì hardcode số 117
+    spinup_hours = config.SPINUP_HOURS
+    print(f"⏱️ Sẽ loại bỏ {spinup_hours} giờ đầu tiên (Spin-up time) từ config.py khi tính toán RMSE.")
     
     # 2. Không gian tìm kiếm (Grid Search Space)
     # Tinh chỉnh 2 tham số nhạy cảm nhất: Nguồn xả (S_base) và Lực nắn (R_nudge)
     search_space = [
-        {'S_base': 5.0,  'R_nudge': 200.0, 'G_nudge': 0.8}, #287.01
-        {'S_base': 10.0, 'R_nudge': 400.0, 'G_nudge': 0.8}, #206.59
-        {'S_base': 21.44,'R_nudge': 600.0, 'G_nudge': 0.9}, #20.84
-        {'S_base': 15.0, 'R_nudge': 800.0, 'G_nudge': 0.95}
+        {'S_base': 0.8567,  'R_nudge': 200.0, 'G_nudge': 0.8}, 
+        {'S_base': 0.8567,  'R_nudge': 400.0, 'G_nudge': 0.8}, 
+        {'S_base': 0.8567,  'R_nudge': 600.0, 'G_nudge': 0.9}, 
+        {'S_base': 0.8567,  'R_nudge': 800.0, 'G_nudge': 0.95},
+        {'S_base': 0.8567,  'R_nudge': 900.0, 'G_nudge': 0.9},
+        {'S_base': 0.8567,  'R_nudge': 1000.0, 'G_nudge': 0.9}
     ]
     
     best_rmse = float('inf')
@@ -56,9 +61,9 @@ def run_calibration_grid_search():
             simulated.append(C_new[config.OBS_I, config.OBS_J])
             observed.append(row['pm25'])
             
-        # Tính RMSE (Bỏ qua 72 giờ đầu tiên để loại trừ hiện tượng Spin-up)
-        sim = np.array(simulated)[72:]
-        obs = np.array(observed)[72:]
+        # Tính RMSE (Bỏ qua 117 giờ đầu tiên để loại trừ hiện tượng Spin-up)
+        sim = np.array(simulated)[spinup_hours:]
+        obs = np.array(observed)[spinup_hours:]
         
         valid = ~np.isnan(obs)
         rmse = np.sqrt(np.mean((sim[valid] - obs[valid])**2))

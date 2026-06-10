@@ -10,7 +10,7 @@ from src.emission_model import EmissionModel
 from src.pde_solver import PDESolver
 from src.physics_engine import wind_to_uv, get_pg_diffusivity, get_washout_coeff
 
-def analyze_spin_up_time(test_hours=200):
+def analyze_spin_up_time(test_hours=720):
     """
     Chạy mô phỏng để tìm ra điểm bão hòa của ma trận (Spin-up time).
     Mặc định chạy thử 15 ngày (360 giờ) trên tập Train.

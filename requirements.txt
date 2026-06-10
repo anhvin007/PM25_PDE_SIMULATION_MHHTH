@@ -1,0 +1,7 @@
+numpy          # Xử lý ma trận Giải tích số cực nhanh
+pandas         # Xử lý chuỗi thời gian (ETL)
+matplotlib     # Xưởng trực quan hóa đa chiều (Phase 6)
+scipy          # Hỗ trợ toán học nội suy
+osmnx          # Tải bản đồ OpenStreetMap tự động
+geopandas      # Xử lý dữ liệu không gian giao thông
+tqdm           # Thanh tiến trình (tiện theo dõi vòng lặp thời gian)

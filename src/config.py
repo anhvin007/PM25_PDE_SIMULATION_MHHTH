@@ -23,12 +23,13 @@ USE_NUDGING_IN_TEST = False
 DT_MACRO = 1.0        # Bước thời gian vĩ mô của dữ liệu Open-Meteo (giờ)
 TRAIN_RATIO = 0.8     # Tỷ lệ chia tập Train (80%) để hiệu chỉnh
 TEST_RATIO = 0.2      # Tỷ lệ chia tập Test (20%) để xác thực ngoài mẫu
+TEST_RUN_RATIO = 0.1  # Tỷ lệ chạy trên tập Test (ví dụ 0.1 = 10% để chạy nhanh)
 
 # =====================================================================
 # 3. THÔNG SỐ VẬT LÝ KHÍ QUYỂN & PHÁT THẢI (Physics & Emissions)
 # =====================================================================
-S_BASE = 0.8567 #21.44        # Cường độ phát thải cơ sở (micro-gram / m^3 / h)
-H_STD = 530        # Chiều cao lớp biên tiêu chuẩn (m)
+S_BASE =  0.1493 #0.8567 #21.44        # Cường độ phát thải cơ sở (micro-gram / m^3 / h)
+H_STD = 584.44  #530        # Chiều cao lớp biên tiêu chuẩn (m)
 EPSILON_BLH = 50.0    # Tránh chia cho 0 khi tính Phi_vol
 
 # Thông số Rửa trôi do giáng thủy (Wet Scavenging Washout)
@@ -36,7 +37,7 @@ ALPHA_RAIN = 3.0e-4# Hệ số bắt giữ hạt
 BETA_RAIN = 0.79      # Hằng số dạng hạt PM2.5
 
 # Hệ số lắng đọng khô
-DRY_DEPOSITION = 0  # Bụi tự động rơi xuống mặt đường % mỗi giờ
+DRY_DEPOSITION = 0.4855  # Bụi tự động rơi xuống mặt đường % mỗi giờ
 
 # =====================================================================
 # 4. THÔNG SỐ ĐỒNG HÓA DỮ LIỆU (Nudging / Parametric Kalman)

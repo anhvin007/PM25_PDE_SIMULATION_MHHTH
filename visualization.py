@@ -254,12 +254,12 @@ if __name__ == "__main__":
     viz = AdvancedVisualizer()
     
 # 1. Vẽ chuỗi thời gian (Lấy ví dụ 500 giờ đầu để nhìn rõ vùng Spin-up)
-    viz.plot_time_series_comparison(start_idx=0, end_idx=200)
+    viz.plot_time_series_comparison(start_idx=0, end_idx=580)
     
     # 2. Vẽ cắt ngang và 3D tại một thời điểm Ô nhiễm cao (Giả sử giờ thứ 200)
- # viz.plot_cross_section(t_idx=500)
- # viz.plot_3d_surface(t_idx=500, title_suffix="Điểm bùng phát khí thải")
+    viz.plot_cross_section(t_idx=500)
+    viz.plot_3d_surface(t_idx=500, title_suffix="Điểm bùng phát khí thải")
     
     # 2. Render Video GIF 48 giờ liên tục (2 ngày)
     # Giúp quan sát chu kỳ ngày-đêm và gió đổi hướng
- # viz.generate_heatmap_animation(start_idx=400,num_frames=48)
+    viz.generate_heatmap_animation(start_idx=0,num_frames=100)

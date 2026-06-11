@@ -3,135 +3,102 @@ import pandas as pd
 import numpy as np
 import os
 from tqdm import tqdm  
+import joblib
 
 from src import config
 from src.emission_model import EmissionModel
 from src.pde_solver import PDESolver
 from src.physics_engine import wind_to_uv, get_pg_diffusivity, get_washout_coeff
 
-def run_simulation():
-    print("🚀 BƯỚC 1: Đang tải Toàn bộ tập dữ liệu Xác thực (Test Data)...")
-    if not os.path.exists(config.TEST_DATA_PATH):
-        print("❌ Lỗi: Không tìm thấy file test_data.csv. Bạn cần chạy data_processor.py trước!")
-        return
-
+def run_hybrid_simulation():
+    print("🚀 BƯỚC 1: Đang tải Tập dữ liệu Xác thực (Test Data) & Mô hình Thống kê...")
     test_df = pd.read_csv(config.TEST_DATA_PATH, index_col='time', parse_dates=True)
-    total_hours = len(test_df)
     
-    print("\n⚙️ BƯỚC 2: Khởi tạo Ma trận Không gian và Động cơ PDE...")
+    # Nếu chỉ muốn chạy một phần của tập Test để tiết kiệm thời gian
+    if getattr(config, 'TEST_RUN_RATIO', 1.0) < 1.0:
+        run_len = max(1, int(len(test_df) * config.TEST_RUN_RATIO))
+        print(f"⚡ Chỉ chạy {config.TEST_RUN_RATIO*100:.0f}% tập Test: {run_len}/{len(test_df)} giờ")
+        test_df = test_df.iloc[:run_len].copy()
+    
+    ecm_model_path = os.path.join(config.BASE_DIR, 'outputs', 'ecm_model.pkl')
+    if not os.path.exists(ecm_model_path):
+        print("❌ Lỗi: Chưa có Mô hình Sửa lỗi! Hãy chạy 'python error_correction.py' trước.")
+        return
+        
+    ecm_model = joblib.load(ecm_model_path)
+    print("✅ Đã load thành công Mô hình Sửa lỗi Thống kê (ECM).")
+    
     em = EmissionModel()
     solver = PDESolver()
 
-    # --- HỆ THỐNG CHECKPOINTING & RESTART ---
     cube_path = os.path.join(config.BASE_DIR, 'outputs', 'history_C_cube.npy')
     csv_path = os.path.join(config.BASE_DIR, 'outputs', 'simulation_results.csv')
     
-    start_idx = 0
-    simulated_station_pm25 = []
-    observed_station_pm25 = []
+    simulated_pde_only = []
+    simulated_hybrid = []
+    observed = []
     history_C = []
 
-    if os.path.exists(cube_path) and os.path.exists(csv_path):
-        print("\n🔄 PHÁT HIỆN DỮ LIỆU CŨ! Đang kích hoạt tiến trình Khôi phục (Resume)...")
-        try:
-            old_df = pd.read_csv(csv_path, index_col='time', parse_dates=True)
-            old_cube = np.load(cube_path)
-            
-            start_idx = len(old_df)
-            
-            if start_idx < total_hours:
-                print(f"✅ Đã khôi phục thành công {start_idx} giờ. Tiếp tục chạy từ giờ thứ {start_idx + 1}...")
-                
-                # 1. Khôi phục Trạng thái Vật lý của Ma trận (Cực kỳ quan trọng)
-                solver.C = old_cube[-1].copy()
-                
-                # 2. Khôi phục danh sách kết quả để nối tiếp
-                simulated_station_pm25 = old_df['simulated_pm25'].tolist()
-                observed_station_pm25 = old_df['pm25'].tolist()
-                history_C = list(old_cube)
-            else:
-                print(f"✅ Dữ liệu đã hoàn tất 100% ({total_hours}/{total_hours} giờ). Không cần chạy thêm!")
-                return
-        except Exception as e:
-            print(f"⚠️ Dữ liệu cũ bị lỗi, hệ thống sẽ chạy lại từ đầu. Lỗi: {e}")
-            start_idx = 0
-
-    if start_idx == 0:
-        print(f"📊 Tổng số giờ cần mô phỏng: {total_hours} giờ. (Chạy mới hoàn toàn)")
-
-    # Cắt bộ dữ liệu để chỉ chạy phần chưa chạy
-    remaining_df = test_df.iloc[start_idx:]
-
-    print("\n⏳ BƯỚC 3: Kích hoạt Vòng lặp Động lực học (Nhấn Ctrl+C để dừng và Lưu sớm)...")
-    
-    # Kiểm tra trạng thái công tắc Nudging (Mặc định là False nếu quên chưa cấu hình)
-    use_nudging = getattr(config, 'USE_NUDGING_IN_TEST', False)
-    mode_name = "TÁI PHÂN TÍCH ĐỒNG HÓA (CÓ NUDGING)" if use_nudging else "DỰ BÁO MÙ (KHÔNG NUDGING)"
-    print(f"👉 Chế độ hiện tại: {mode_name}")
+    print("\n⏳ BƯỚC 2: Kích hoạt Hệ thống Dự báo Lai (Hybrid: PDE + ECM)...")
     
     try:
-        # Cấu hình thanh tqdm để hiển thị đúng tiến độ tổng
-        with tqdm(total=total_hours, initial=start_idx, desc="Đang mô phỏng") as pbar:
-            for current_time, row in remaining_df.iterrows():
+        with tqdm(total=len(test_df), desc="Đang mô phỏng") as pbar:
+            for current_time, row in test_df.iterrows():
                 
-                ws = row['wind_speed']
-                theta = row['wind_direction']
-                cc = row['cloud_cover']
-                blh = row['blh']
-                precip = row['precipitation']
-                
-                # --- LOGIC NUDGING CHUẨN HỌC THUẬT ---
-                obs_real = row['pm25']
-                # Nếu đang ở chế độ Test Mù (Blind Test), che giấu số liệu thực tế bằng NaN
-                obs_to_feed = obs_real if use_nudging else np.nan
-
+                # --- PHẦN 1: MÔ HÌNH VẬT LÝ TẤT ĐỊNH (PDE DRIFT) ---
+                ws, theta = row['wind_speed'], row['wind_direction']
                 u, v = wind_to_uv(ws, theta)
-                D = get_pg_diffusivity(ws, cc, current_time.hour)
-                Lambda_rain = get_washout_coeff(precip)
-                
-                S_matrix = em.get_emission_matrix(current_time, blh)
+                D = get_pg_diffusivity(ws, row['cloud_cover'], current_time.hour)
+                Lambda_rain = get_washout_coeff(row['precipitation'])
+                S_matrix = em.get_emission_matrix(current_time, row['blh'])
 
+                # Chạy PDE mù tuyệt đối (KHÔNG CÓ NUDGING)
                 C_new = solver.step(
-                    dt_hour=1.0, 
-                    u=u, v=v, D=D, 
-                    Lambda_rain=Lambda_rain, 
-                    S_matrix=S_matrix, 
-                    obs_pm25=obs_to_feed  # Truyền biến đã qua kiểm duyệt vào đây
+                    dt_hour=1.0, u=u, v=v, D=D, 
+                    Lambda_rain=Lambda_rain, S_matrix=S_matrix, obs_pm25=np.nan
                 )
 
-                sim_val = C_new[config.OBS_I, config.OBS_J]
-                simulated_station_pm25.append(sim_val)
-                observed_station_pm25.append(obs_real) # Vẫn lưu đáp án thật để chấm điểm
+                f_pde = C_new[config.OBS_I, config.OBS_J]
                 
+                # --- PHẦN 2: MÔ HÌNH THỐNG KÊ NGẪU NHIÊN (ECM DIFFUSION) ---
+                features = pd.DataFrame([{
+                    'wind_speed': ws, 'wind_direction': theta, 
+                    'blh': row['blh'], 'precipitation': row['precipitation'], 
+                    'cloud_cover': row['cloud_cover'], 'sim_pde': f_pde,
+                    'hour': current_time.hour
+                }])
+                
+                # Dự phóng sai số kỳ vọng: E[Epsilon | M]
+                predicted_residual = ecm_model.predict(features)[0]
+                
+                # Nồng độ Hybrid Cuối cùng = PDE + Sai số
+                c_final = f_pde + predicted_residual
+                
+                # --- LƯU TRỮ TÁCH BIỆT (DECOUPLING) ---
+                simulated_pde_only.append(f_pde)
+                simulated_hybrid.append(c_final) # Báo cáo CSV lấy điểm số Hybrid
+                observed.append(row['pm25'])
+                
+                # LƯU MA TRẬN VẬT LÝ THUẦN TÚY: Giúp video 3D hiện rõ các dải khói trên đường bộ
                 history_C.append(C_new.copy())
                 pbar.update(1)
 
     except KeyboardInterrupt:
-        print("\n\n⚠️ NHẬN ĐƯỢC LỆNH DỪNG KHẨN CẤP TỪ NGƯỜI DÙNG!")
-        print(f"🔄 Hệ thống đang kích hoạt quy trình đóng gói sớm...")
+        print("\n⚠️ NHẬN LỆNH DỪNG! Đang lưu dữ liệu...")
 
-    # ==========================================
-    # LƯU TRỮ DỮ LIỆU ĐÃ CHẠY HOẶC NỐI TIẾP
-    # ==========================================
-    ran_hours = len(simulated_station_pm25)
-    if ran_hours == start_idx:
-        print("❌ Chưa chạy thêm được giờ nào, hủy bỏ quá trình lưu.")
-        return
-        
-    # Cắt df tổng hợp để lưu thành file liên tục
+    ran_hours = len(simulated_hybrid)
     test_df_sliced = test_df.iloc[:ran_hours].copy()
 
-    print("\n💾 BƯỚC 4: Đóng gói Dữ liệu & Lưu trữ (Saving Mode)...")
+    print("\n💾 BƯỚC 3: Đóng gói Kết quả...")
+    # Lưu khối Cube 3D nguyên bản
+    np.save(cube_path, np.array(history_C))
     
-    history_cube = np.array(history_C)
-    np.save(cube_path, history_cube)
-    print(f"📦 Đã xuất/cập nhật khối dữ liệu 3D: {cube_path}")
-    
-    test_df_sliced['simulated_pm25'] = simulated_station_pm25
+    test_df_sliced['sim_pde'] = simulated_pde_only
+    test_df_sliced['simulated_pm25'] = simulated_hybrid # Kết quả Hybrid lấy làm chính
     test_df_sliced.to_csv(csv_path)
-    print(f"📦 Đã xuất/cập nhật Time-series CSV: {csv_path}")
     
-    print("\n✅ HOÀN TẤT LƯU TRỮ AN TOÀN! Giờ bạn có thể chạy lại file này để tiếp tục, hoặc chạy 'evaluate_results.py'.")
+    print(f"📦 Đã xuất Time-series CSV có chứa cột Hybrid tại: {csv_path}")
+    print("\n✅ HOÀN TẤT! Bạn hãy chạy 'evaluate_results.py' để xem chỉ số RMSE Hybrid!")
 
 if __name__ == '__main__':
-    run_simulation()
+    run_hybrid_simulation()

@@ -1,132 +1,137 @@
 # File: src/emission_model.py
 import numpy as np
-import osmnx as ox
-import pandas as pd
 import os
 from src import config
 
 class EmissionModel:
-    def __init__(self, center_lat=10.800003, center_lon=106.600006):
+    def __init__(self):
         """
-        Khởi tạo Mô hình Phát thải. Tọa độ mặc định lấy từ trạm quan trắc Tân Phú/Bình Tân.
+        Khởi tạo Mô hình Phát thải Nguồn đường (Line Source Emission Model).
+        Tuyệt đối KHÔNG CÓ PHÁT THẢI NỀN. Bụi chỉ sinh ra trên đường giao thông.
         """
-        self.lat = center_lat
-        self.lon = center_lon
-        self.W_spatial = None
+        self.S_base = getattr(config, 'S_BASE', 1.0)
         
-        # Gọi hàm tạo ma trận không gian ngay khi khởi tạo class
-        self._build_spatial_weight_matrix()
+        # Thư mục chứa file outputs
+        os.makedirs(os.path.join(config.BASE_DIR, 'outputs'), exist_ok=True)
+        self.w_spatial_path = os.path.join(config.BASE_DIR, 'outputs', 'W_spatial.npy')
+        
+        self.road_matrix = self._load_spatial_matrix()
 
-    def _build_spatial_weight_matrix(self):
-        """
-        [Ma trận W_spatial] Tải bản đồ OpenStreetMap và Rasterize thành lưới 100x100.
-        """
-        print(f"🌍 Đang tải bản đồ giao thông bán kính {config.DOMAIN_LENGTH/2}m từ OpenStreetMap...")
+    def _draw_line_dda(self, matrix, x0, y0, x1, y1, weight):
+        """ Thuật toán đồ họa DDA: Vẽ đường thẳng nối 2 node tọa độ lên ma trận Numpy """
+        dx, dy = x1 - x0, y1 - y0
+        steps = max(abs(dx), abs(dy))
         
-        # Kiểm tra xem đã có file ma trận lưu sẵn chưa (để không phải tải lại từ mạng)
-        cache_path = os.path.join(config.BASE_DIR, 'data', 'geo', 'w_spatial_100x100.npy')
-        if os.path.exists(cache_path):
-            self.W_spatial = np.load(cache_path)
-            print("✅ Đã load Ma trận W_spatial từ bộ nhớ đệm (Cache).")
+        if steps == 0:
+            if 0 <= y0 < matrix.shape[0] and 0 <= x0 < matrix.shape[1]:
+                matrix[int(y0), int(x0)] = max(matrix[int(y0), int(x0)], weight)
             return
+            
+        x_inc, y_inc = dx / steps, dy / steps
+        x, y = float(x0), float(y0)
+        
+        for _ in range(int(steps) + 1):
+            idx_x, idx_y = int(round(x)), int(round(y))
+            if 0 <= idx_y < matrix.shape[0] and 0 <= idx_x < matrix.shape[1]:
+                # Dùng max để tránh các ngã tư giao nhau bị cộng dồn phát thải quá cao
+                matrix[idx_y, idx_x] = max(matrix[idx_y, idx_x], weight) 
+            x += x_inc
+            y += y_inc
 
-        # 1. Tải đồ thị giao thông (Mạng lưới đường lái xe ô tô/xe máy)
-        dist_m = config.DOMAIN_LENGTH / 2.0  # Bán kính 1000m
-        G = ox.graph_from_point((self.lat, self.lon), dist=dist_m, network_type='drive')
-        
-        # 2. Khởi tạo ma trận nền (Background noise = 0.1)
-        self.W_spatial = np.full((config.N_Y, config.N_X), 0.1, dtype=np.float32)
-        
-        # 3. Tính toán ranh giới bounding box để ánh xạ tọa độ (Lat/Lon sang Index)
-        nodes = ox.graph_to_gdfs(G, edges=False)
-        min_lon, min_lat, max_lon, max_lat = nodes.total_bounds
-        
-        d_lon = (max_lon - min_lon) / config.N_X
-        d_lat = (max_lat - min_lat) / config.N_Y
+    def _generate_osm_matrix(self):
+        """ Tự động tải bản đồ thực tế từ OpenStreetMap và rasterize thành lưới PDE """
+        print("🌍 Bắt đầu kết nối OpenStreetMap (Bán kính 1000m)...")
+        try:
+            import osmnx as ox
+        except ImportError:
+            print("❌ Lỗi: Thư viện 'osmnx' chưa cài đặt. Vui lòng chạy: pip install osmnx")
+            return None
 
-        # 4. Rasterize (Gán trọng số cho các ô chứa đường giao thông)
-        edges = ox.graph_to_gdfs(G, nodes=False)
-        for _, edge in edges.iterrows():
-            # Phân loại đường để gán trọng số
-            hw_type = edge.get('highway', '')
-            if 'primary' in hw_type or 'trunk' in hw_type:
-                weight = 1.0  # Đường quốc lộ/đại lộ
-            elif 'secondary' in hw_type or 'tertiary' in hw_type:
-                weight = 0.6  # Đường nhánh
-            else:
-                weight = 0.3  # Hẻm, khu dân cư
+        # Tọa độ mặc định (Trạm Tân Phú, TP.HCM)
+        lat = getattr(config, 'STATION_LAT', 10.800003) 
+        lon = getattr(config, 'STATION_LON', 106.600006)
+         
+        try:
+            # Tải Graph mạng lưới đường xe chạy
+            G = ox.graph_from_point((lat, lon), dist=1000, network_type='drive')
+            
+            # Khởi tạo ma trận nồng độ trống
+            W = np.zeros((config.N_Y, config.N_X))
+            
+            # Trích xuất ranh giới tọa độ (Bounding Box)
+            nodes = ox.graph_to_gdfs(G, edges=False)
+            min_lon, max_lon = nodes['x'].min(), nodes['x'].max()
+            min_lat, max_lat = nodes['y'].min(), nodes['y'].max()
+            
+            def latlon_to_xy(n_lat, n_lon):
+                x = int((n_lon - min_lon) / (max_lon - min_lon) * (config.N_X - 1))
+                y = int((n_lat - min_lat) / (max_lat - min_lat) * (config.N_Y - 1))
+                return x, y
+            
+            # Quét toàn bộ các đoạn đường và vẽ lên ma trận
+            for u, v, data in G.edges(data=True):
+                x0, y0 = latlon_to_xy(G.nodes[u]['y'], G.nodes[u]['x'])
+                x1, y1 = latlon_to_xy(G.nodes[v]['y'], G.nodes[v]['x'])
                 
-            # Ánh xạ hình học (LineString) xuống ma trận
-            if hasattr(edge['geometry'], 'coords'):
-                coords = list(edge['geometry'].coords)
-                for lon, lat in coords:
-                    j = int((lon - min_lon) / d_lon)
-                    i = int((lat - min_lat) / d_lat)
+                # Phân loại trọng số đường (Đại lộ kẹt xe nhiều hơn hẻm)
+                highway = str(data.get('highway', ''))
+                if 'primary' in highway or 'trunk' in highway:
+                    weight = 3.0
+                elif 'secondary' in highway or 'tertiary' in highway:
+                    weight = 2.0
+                else:
+                    weight = 1.0
                     
-                    # Ràng buộc không cho văng ra khỏi ma trận
-                    i = max(0, min(config.N_Y - 1, i))
-                    j = max(0, min(config.N_X - 1, j))
-                    
-                    # Cập nhật ô lưới (Lấy Max để giữ lại đường lớn nếu đè lên nhau)
-                    self.W_spatial[i, j] = max(self.W_spatial[i, j], weight)
+                self._draw_line_dda(W, x0, y0, x1, y1, weight)
+            
+            return W
+            
+        except Exception as e:
+            print(f"⚠️ Không thể tải dữ liệu OSM (Có thể do lỗi mạng): {e}")
+            return None
 
-        # Lưu lại để lần sau chạy không cần tải lại mạng
-        np.save(cache_path, self.W_spatial)
-        print("✅ Đã Rasterize thành công ma trận không gian giao thông!")
+    def _load_spatial_matrix(self):
+        """ Quản lý tiến trình nạp ma trận (Ưu tiên Cache -> OSM -> Giả lập) """
+        if os.path.exists(self.w_spatial_path):
+            W = np.load(self.w_spatial_path)
+            print("✅ Đã load Ma trận W_spatial từ bộ nhớ đệm (Cache).")
+        else:
+            print("⚠️ Không tìm thấy W_spatial.npy. Đang khởi tạo bộ máy trích xuất...")
+            W = self._generate_osm_matrix()
+            
+            if W is None:
+                print("⚠️ Kích hoạt mạng lưới giao thông giả lập khẩn cấp...")
+                W = np.zeros((config.N_Y, config.N_X))
+                W[48:52, :] = 3.0  # Đại lộ ngang
+                W[:, 20:22] = 1.0  # Hẻm dọc 1
+                W[:, 80:82] = 1.0  # Hẻm dọc 2
+                
+            # Chuẩn hóa để đường lớn nhất (Đại lộ) có cường độ = 1.0
+            if np.max(W) > 0:
+                W = W / np.max(W) 
+                
+            # Lưu lại Cache để lần sau chạy thuật toán PDE không phải tải lại OSM
+            np.save(self.w_spatial_path, W)
+            print(f"💾 Đã lưu cache bản đồ thành công tại: {self.w_spatial_path}")
+            
+        return W
 
-    def _get_temporal_weight(self, hour):
-        """
-        [Hàm W_temporal] Nhịp sinh học giao thông 24h.
-        Sử dụng phân phối Bi-modal Gaussian (Đỉnh đôi) để mô phỏng 2 khung giờ cao điểm.
-        """
-        # Đỉnh sáng: 7h30 (Độ lệch chuẩn 1.5h), Đỉnh chiều: 17h30 (Độ lệch chuẩn 2.0h)
-        morning_peak = np.exp(-0.5 * ((hour - 7.5) / 1.5) ** 2)
-        evening_peak = np.exp(-0.5 * ((hour - 17.5) / 2.0) ** 2)
-        
-        # Nền ban đêm = 0.2 (20% lượng xe), Đỉnh = 1.0 (100% lượng xe)
-        w_t = 0.2 + 0.8 * morning_peak + 0.8 * evening_peak
-        return min(w_t, 1.0) # Đảm bảo không vượt ngưỡng 1.0
+    def _get_diurnal_factor(self, hour):
+        if 7 <= hour <= 9: return 1.8   
+        elif 17 <= hour <= 19: return 2.2 
+        elif 22 <= hour or hour <= 4: return 0.1 
+        elif 11 <= hour <= 13: return 1.0   
+        else: return 0.8   
 
-    def _get_volume_factor(self, blh):
-        """
-        [Hàm Phi_vol] Hệ số ép thể tích lớp biên khí quyển.
-        """
-        # Tránh lỗi chia cho 0 hoặc BLH quá thấp gây nổ ma trận
-        safe_blh = max(blh, config.EPSILON_BLH) 
-        return config.H_STD / safe_blh
+    def _get_blh_factor(self, blh):
+        h_std = getattr(config, 'H_STD', 500.0)
+        blh_safe = max(blh, 50.0)
+        return h_std / blh_safe
 
-    def get_emission_matrix(self, dt_time, blh):
-        """
-        TRÁI TIM MODULE: Sinh ra ma trận phát thải tổng S(x,y,t) cho một giờ cụ thể.
-        Inputs:
-            - dt_time: Đối tượng Datetime (để trích xuất giờ)
-            - blh: Chiều cao lớp biên (Boundary Layer Height) từ Open-Meteo
-        Output:
-            - Ma trận 2D nồng độ PM2.5 sinh ra trong giờ đó (shape: 100x100)
-        """
-        hour = dt_time.hour
+    def get_emission_matrix(self, current_time, blh):
+        hour = current_time.hour
+        temporal_factor = self._get_diurnal_factor(hour)
+        stability_factor = self._get_blh_factor(blh)
         
-        W_t = self._get_temporal_weight(hour)
-        Phi_vol = self._get_volume_factor(blh)
-        
-        # Phương trình S(x,y,t) kinh điển
-        S_matrix = config.S_BASE * self.W_spatial * W_t * Phi_vol
-        
+        S_matrix = self.S_base * temporal_factor * stability_factor * self.road_matrix
         return S_matrix
-
-# Khối Test Nhanh
-if __name__ == "__main__":
-    import datetime
-    
-    # Khởi tạo mô hình (Lần đầu chạy sẽ mất khoảng 10-15 giây để kéo bản đồ từ vệ tinh)
-    em = EmissionModel()
-    
-    # Test Giờ cao điểm sáng (8h) với Lớp biên thấp (300m)
-    test_time = datetime.datetime(2026, 6, 1, 8, 0, 0)
-    S_morning = em.get_emission_matrix(test_time, blh=300.0)
-    
-    print(f"\nGiờ cao điểm (8:00), BLH=300m:")
-    print(f"- W_temporal: {em._get_temporal_weight(8):.2f}")
-    print(f"- Phi_vol: {em._get_volume_factor(300.0):.2f}")
-    print(f"- Đỉnh phát thải tối đa trên ma trận: {np.max(S_morning):.2f} µg/m³/h")
-    print(f"- Vùng nền (hẻm nhỏ): {np.min(S_morning):.2f} µg/m³/h")
